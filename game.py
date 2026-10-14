@@ -124,6 +124,11 @@ class GameHandler:
         if elapsed < 0:
             raise ValueError("Elapsed time must not be negative")
         self._time_diff += min(elapsed, 0.25)
+
+        for player in self.players:
+            if player.health <= 0:
+                self.players.remove(player)
+
         while self._time_diff >= DT:
             self._step()
             self._time_diff -= DT
