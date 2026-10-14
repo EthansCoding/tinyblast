@@ -6,8 +6,10 @@ FIRERATE = 3
 
 
 class Player:
-    def __init__(self):
-        self.position = pygame.Vector2(WIDTH / 2, HEIGHT / 2)
+    def __init__(self, position=None):
+        self.position = pygame.Vector2(
+            position if position is not None else (WIDTH / 2, HEIGHT / 2)
+        )
         self.angle = 0
         self.speed = 200
         self.turn_speed = 180
@@ -70,57 +72,105 @@ def draw_player(screen, player):
 def draw_bullet(screen, bullet):
     pygame.draw.circle(screen, "red", bullet.position, bullet.radius)
 
-def main():
-    pygame.init()
-    screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Tiny Blast!")
-    clock = pygame.time.Clock()
 
-    player = Player()
-    timeDiff = 0.0
-    running = True
-    fireCD = 0
-    bullets = []
+class GameHandler:
+    def __init__(self, display_screen=True):
+        self.players = []
+        self.bullets = []
+        self.screen = None
+        self._inputs = {}
+        self._fire_cooldowns = {}
+        self._time_diff = 0.0
 
-    while running:
-        elapsed = clock.tick(60) / 1000
+        if display_screen:
+            pygame.display.init()
+            self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
+            pygame.display.set_caption("Tiny Blast!")
 
-        timeDiff += min(elapsed, 0.25)
+    def create_player(self, position=None):
+        player = Player(position)
+        self.players.append(player)
+        self._inputs[player] = (0, 0, False)
+        self._fire_cooldowns[player] = 0
+        return player
 
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
+    def set_input(self, player, movement=0, rotation=0, fire=False):
+        if player not in self._inputs:
+            raise ValueError("Player must be created by this game handler")
+        self._inputs[player] = (movement, rotation, fire)
 
-        if not running:
-            break
+    def _step(self):
+        for player in self.players:
+            movement, rotation, fire = self._inputs[player]
+            self._fire_cooldowns[player] = max(
+                0, self._fire_cooldowns[player] - 1
+            )
 
-        keys = pygame.key.get_pressed()
-        movement = int(keys[pygame.K_w]) - int(keys[pygame.K_s])
-        rotation = int(keys[pygame.K_d]) - int(keys[pygame.K_a])
-        fire = int(keys[pygame.K_SPACE])
-
-        while timeDiff >= DT:
-            if fireCD > 0: fireCD -= 1
             player.update(movement, rotation, DT)
-            if fire == 1:
-                if fireCD == 0:
-                    newBullPosition = player.position + pygame.Vector2(1, 0).rotate(player.angle) * (player.radius + 1)
-                    bullets.append(Bullet(newBullPosition, player.angle))
-                    fireCD = 60/FIRERATE
+            if fire and self._fire_cooldowns[player] == 0:
+                direction = pygame.Vector2(1, 0).rotate(player.angle)
+                position = player.position + direction * (player.radius + 1)
+                self.bullets.append(Bullet(position, player.angle))
+                self._fire_cooldowns[player] = 1 / (DT * FIRERATE)
 
-            for bullet in bullets: 
-                if bullet.hasHit or bullet.oob: 
-                    bullets.remove(bullet)
-                else:
-                    bullet.update(DT, [player])
-            timeDiff -= DT
+        for bullet in self.bullets:
+            bullet.update(DT, self.players)
+        self.bullets = [
+            bullet for bullet in self.bullets
+            if not bullet.hasHit and not bullet.oob
+        ]
 
-        screen.fill((25, 25, 30))
-        draw_player(screen, player)
-        for bullet in bullets: draw_bullet(screen, bullet)
+    def update(self, elapsed=DT):
+        if elapsed < 0:
+            raise ValueError("Elapsed time must not be negative")
+        self._time_diff += min(elapsed, 0.25)
+        while self._time_diff >= DT:
+            self._step()
+            self._time_diff -= DT
+
+        if self.screen is not None:
+            self._draw()
+
+        return (
+            [(player.position.x, player.position.y) for player in self.players],
+            [(bullet.position.x, bullet.position.y) for bullet in self.bullets],
+        )
+
+    def _draw(self):
+        self.screen.fill((25, 25, 30))
+        for player in self.players:
+            draw_player(self.screen, player)
+        for bullet in self.bullets:
+            draw_bullet(self.screen, bullet)
         pygame.display.flip()
 
-    pygame.quit()
+    def close(self):
+        if self.screen is not None:
+            pygame.display.quit()
+            self.screen = None
+
+
+def main():
+    game = GameHandler(display_screen=True)
+    player = game.create_player()
+    clock = pygame.time.Clock()
+
+    try:
+        while True:
+            elapsed = clock.tick(60) / 1000
+            if any(event.type == pygame.QUIT for event in pygame.event.get()):
+                break
+
+            keys = pygame.key.get_pressed()
+            game.set_input(
+                player,
+                movement=int(keys[pygame.K_w]) - int(keys[pygame.K_s]),
+                rotation=int(keys[pygame.K_d]) - int(keys[pygame.K_a]),
+                fire=bool(keys[pygame.K_SPACE]),
+            )
+            game.update(elapsed)
+    finally:
+        game.close()
 
 
 if __name__ == "__main__":
