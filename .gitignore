@@ -8,6 +8,7 @@ __pycache__/
 
 # Zipped Model Outputs
 *.zip
+training_logs/
 
 # Distribution / packaging
 .Python

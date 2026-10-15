@@ -16,12 +16,19 @@ class Player:
         self.turn_speed = 180
         self.radius = 15
         self.health = 5
+        self.fire_rate = FIRERATE
+        self.velocity = pygame.Vector2()
 
-    def update(self, movement, rotation, dt):
+    def update(self, movement, rotation, dt, strafe=0):
         self.angle = (self.angle + rotation * self.turn_speed * dt) % 360
-        
+
         direction = pygame.Vector2(1, 0).rotate(self.angle)
-        self.position += direction * movement * self.speed * dt
+        travel = direction * movement + direction.rotate(90) * strafe
+        # Diagonal input must not move faster than a single axis.
+        if travel.length_squared() > 1:
+            travel.normalize_ip()
+        previous_position = self.position.copy()
+        self.position += travel * self.speed * dt
 
         self.position.x = max(
             self.radius, min(WIDTH - self.radius, self.position.x)
@@ -29,6 +36,7 @@ class Player:
         self.position.y = max(
             self.radius, min(HEIGHT - self.radius, self.position.y)
         )
+        self.velocity = (self.position - previous_position) / dt if dt else pygame.Vector2()
 
 class Bullet:
     def __init__(self, position, angle, owner=None):
@@ -124,29 +132,33 @@ class GameHandler:
     def create_player(self, position=None):
         player = Player(position)
         self.players.append(player)
-        self._inputs[player] = (0, 0, False)
+        self._inputs[player] = (0, 0, False, 0)
         self._fire_cooldowns[player] = 0
         return player
 
-    def set_input(self, player, movement=0, rotation=0, fire=False):
+    def set_input(self, player, movement=0, rotation=0, fire=False, *, strafe=0):
         if player not in self._inputs:
             raise ValueError("Player must be created by this game handler")
-        self._inputs[player] = (movement, rotation, fire)
+        self._inputs[player] = (movement, rotation, fire, strafe)
+
+    def cooldown_fraction(self, player):
+        """Time until the next shot, normalized to this player's shot interval."""
+        return min(1.0, self._fire_cooldowns[player] * DT * player.fire_rate)
 
     def _step(self):
         for player in self.players:
-            movement, rotation, fire = self._inputs[player]
+            movement, rotation, fire, strafe = self._inputs[player]
             self._fire_cooldowns[player] = max(
                 0, self._fire_cooldowns[player] - 1
             )
 
-            player.update(movement, rotation, DT)
+            player.update(movement, rotation, DT, strafe=strafe)
             if fire and self._fire_cooldowns[player] == 0:
                 direction = pygame.Vector2(1, 0).rotate(player.angle)
                 position = player.position + direction * (player.radius + 1)
                 self.bullets.append(Bullet(position, player.angle, owner=player))
                 self.fired_players.add(player)
-                self._fire_cooldowns[player] = 1 / (DT * FIRERATE)
+                self._fire_cooldowns[player] = 1 / (DT * player.fire_rate)
 
         for bullet in self.bullets:
             bullet.update(DT, self.players)
@@ -205,7 +217,9 @@ def main():
             game.set_input(
                 player,
                 movement=int(keys[pygame.K_w]) - int(keys[pygame.K_s]),
-                rotation=int(keys[pygame.K_d]) - int(keys[pygame.K_a]),
+                strafe=int(keys[pygame.K_d]) - int(keys[pygame.K_a]),
+                rotation=int(keys[pygame.K_e] or keys[pygame.K_RIGHT])
+                - int(keys[pygame.K_q] or keys[pygame.K_LEFT]),
                 fire=bool(keys[pygame.K_SPACE]),
             )
             game.update(elapsed)

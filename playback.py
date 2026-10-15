@@ -2,9 +2,8 @@ import argparse
 from pathlib import Path
 
 import pygame
-from stable_baselines3 import PPO
-
-from arena_env import tinyBlasterEnv
+from arena_env import ACTION_REPEAT, tinyBlasterEnv
+from evaluate import DEFAULT_MODEL, load_model
 from game import DT, HEIGHT, WIDTH, draw_bullet, draw_player
 
 
@@ -41,23 +40,28 @@ def main():
     parser = argparse.ArgumentParser(description="Watch the trained Tiny Blast model play.")
     parser.add_argument(
         "model", nargs="?", type=Path,
-        default=Path(__file__).resolve().with_name("arena_ai.zip"),
-        help="Model archive (default: arena_ai.zip beside this script).",
+        default=DEFAULT_MODEL,
+        help="Model archive (default: arena_ai_v2.zip beside this script).",
     )
     parser.add_argument(
         "--fps", type=int, default=round(1 / DT),
-        help="Playback steps per second (default: 60).",
+        help="Physics frames per second (default: 60; four frames per AI decision).",
     )
+    parser.add_argument("--bot-style", choices=("stationary", "strafe", "mixed"), default="mixed")
+    parser.add_argument("--seed", type=int, default=50_000)
     args = parser.parse_args()
-    if args.fps <= 0:
-        parser.error("--fps must be greater than zero")
+    if args.fps <= 0 or args.seed < 0:
+        parser.error("--fps must be positive and --seed must be nonnegative")
 
-    env = tinyBlasterEnv()
+    # Render every physics frame while retaining the policy's training decision rate.
+    env = tinyBlasterEnv(action_repeat=1, bot_style=args.bot_style, shaping=False)
     try:
         try:
-            model = PPO.load(args.model, env=env, device="cpu")
+            model = load_model(args.model, env)
         except FileNotFoundError:
             parser.error(f"Model not found: {args.model}. Train a model with train.py first.")
+        except ValueError as exc:
+            parser.error(str(exc))
 
         pygame.display.init()
         pygame.font.init()
@@ -66,7 +70,8 @@ def main():
         font = pygame.font.Font(None, 24)
         clock = pygame.time.Clock()
 
-        observation, _ = env.reset()
+        observation, _ = env.reset(seed=args.seed)
+        decision_frame = 0
         episode = 1
         total_reward = 0.0
         paused = False
@@ -88,15 +93,17 @@ def main():
                         restart = True
 
             if restart or (result and not paused and pygame.time.get_ticks() >= restart_at):
-                observation, _ = env.reset()
+                observation, _ = env.reset(seed=args.seed + episode)
+                decision_frame = 0
                 episode += 1
                 total_reward = 0.0
                 result = ""
 
             if not paused and not result:
-                action, _ = model.predict(observation, deterministic=True)
-                # env.step advances the same fixed timestep used during training.
+                if decision_frame % ACTION_REPEAT == 0:
+                    action, _ = model.predict(observation, deterministic=True)
                 observation, reward, terminated, truncated, _ = env.step(action)
+                decision_frame += 1
                 total_reward += reward
                 if terminated or truncated:
                     if terminated:
