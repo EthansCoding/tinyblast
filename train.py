@@ -1,7 +1,7 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.env_checker import check_env
 from stable_baselines3.common.monitor import Monitor
-from gym import tinyBlasterEnv # Your gym.py file and environment class
+from arena_env import tinyBlasterEnv
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     )
 
     try:
-        model.learn(total_timesteps=100_000)
+        model.learn(total_timesteps=1_000_000)
         model.save("arena_ai")
     finally:
         env.close()

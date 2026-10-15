@@ -5,6 +5,10 @@ import numpy as np
 from gymnasium import spaces
 
 
+AIM_TOLERANCE_DEGREES = 5
+AIM_REWARD = 0.01
+
+
 class tinyBlasterEnv(gym.Env):
     def __init__(self):
         super().__init__()
@@ -18,17 +22,19 @@ class tinyBlasterEnv(gym.Env):
         )
 
         # Create your simulation here.
+        self.stepCount = 0
         self.handler = game.GameHandler()
-        self.MLPlayer = handler.create_player()
-        self.SCRIPTPlayer = handler.create_player()
+        self.MLPlayer = self.handler.create_player((200, 100))
+        self.SCRIPTPlayer = self.handler.create_player((600, 500))
 
 
     def reset(self, *, seed=None, options=None):
         super().reset(seed=seed)
 
+        self.stepCount = 0
         self.handler = game.GameHandler()
-        self.MLPlayer = handler.create_player()
-        self.SCRIPTPlayer = handler.create_player()
+        self.MLPlayer = self.handler.create_player((200, 100))
+        self.SCRIPTPlayer = self.handler.create_player((600, 500))
 
         observation = self._get_observation()
         info = {}
@@ -36,7 +42,7 @@ class tinyBlasterEnv(gym.Env):
         return observation, info
 
     def step(self, action):
-        if not self.stepCount: 
+        if self.stepCount is None:
             self.stepCount = 0
         else:
             self.stepCount += 1
@@ -67,7 +73,8 @@ class tinyBlasterEnv(gym.Env):
             self.SCRIPTPlayer,
             movement=0,
             rotation=bot_rotation,
-            fire=offset.length_squared() > 0 and abs(angle_error) <= 5,
+            fire=(offset.length_squared() > 0
+                  and abs(angle_error) <= AIM_TOLERANCE_DEGREES),
         )
         self.handler.update()
         
@@ -75,9 +82,19 @@ class tinyBlasterEnv(gym.Env):
         terminated = False
         truncated = False
 
+        # Reward an actual shot using the heading after movement and rotation.
+        if self.MLPlayer in self.handler.fired_players:
+            offset = self.SCRIPTPlayer.position - self.MLPlayer.position
+            target_angle = math.degrees(math.atan2(offset.y, offset.x))
+            angle_error = (target_angle - self.MLPlayer.angle + 180) % 360 - 180
+            if offset.length_squared() > 0 and abs(angle_error) <= AIM_TOLERANCE_DEGREES:
+                reward = AIM_REWARD
+
         if len(self.handler.players) < 2:
             terminated = True
-            if self.handler.players[0] == self.MLPlayer:
+            if not self.handler.players:
+                reward = 0.0
+            elif self.MLPlayer in self.handler.players:
                 reward = 1.0
             else:
                 reward = -1.0

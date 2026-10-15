@@ -1,8 +1,9 @@
+import math
 import pygame
 
 WIDTH, HEIGHT = 800, 600 #Dimensions of game.
 DT = 1 / 60 #Time step to use
-FIRERATE = 3
+FIRERATE = 1
 
 
 class Player:
@@ -30,28 +31,60 @@ class Player:
         )
 
 class Bullet:
-    def __init__(self, position, angle):
-        self.position = position
+    def __init__(self, position, angle, owner=None):
+        self.position = pygame.Vector2(position)
         self.angle = angle
+        self.owner = owner
         self.speed = 500
         self.radius = 5
         self.hasHit = False
         self.oob = False
 
     def update(self, dt, players):
+        if self.hasHit or self.oob:
+            return
+
         direction = pygame.Vector2(1, 0).rotate(self.angle)
-        self.position += direction * (self.speed * dt)
-        
+        displacement = direction * (self.speed * dt)
+        distance_squared = displacement.length_squared()
+        first_hit = None
+        first_hit_time = math.inf
+
+        # Sweep the bullet's circle along its whole path, stopping at first contact.
+        for player in players:
+            if player is self.owner or player.health <= 0:
+                continue
+            offset = self.position - player.position
+            radius = self.radius + player.radius
+            separation = offset.length_squared() - radius * radius
+            if separation <= 0:
+                hit_time = 0.0
+            elif distance_squared > 0:
+                projection = offset.dot(displacement)
+                discriminant = projection * projection - distance_squared * separation
+                if discriminant < 0:
+                    continue
+                hit_time = (-projection - math.sqrt(discriminant)) / distance_squared
+                if not 0 <= hit_time <= 1:
+                    continue
+            else:
+                continue
+
+            if hit_time < first_hit_time:
+                first_hit = player
+                first_hit_time = hit_time
+
+        if first_hit is not None:
+            self.position += displacement * first_hit_time
+            first_hit.health -= 1
+            self.hasHit = True
+        else:
+            self.position += displacement
+
         if self.position.x > WIDTH or self.position.x < 0:
             self.oob = True
         if self.position.y > HEIGHT or self.position.y < 0:
             self.oob = True
-
-        for player in players:
-            dist = pow(pow(self.position.x - player.position.x, 2) +  pow(self.position.y - player.position.y, 2), .5)
-            if dist < player.radius:
-                player.health -= 1
-                self.hasHit = True
 
 def draw_player(screen, player):
     length = 20
@@ -74,9 +107,10 @@ def draw_bullet(screen, bullet):
 
 
 class GameHandler:
-    def __init__(self, display_screen=True):
+    def __init__(self, display_screen=False):
         self.players = []
         self.bullets = []
+        self.fired_players = set()
         self.screen = None
         self._inputs = {}
         self._fire_cooldowns = {}
@@ -110,7 +144,8 @@ class GameHandler:
             if fire and self._fire_cooldowns[player] == 0:
                 direction = pygame.Vector2(1, 0).rotate(player.angle)
                 position = player.position + direction * (player.radius + 1)
-                self.bullets.append(Bullet(position, player.angle))
+                self.bullets.append(Bullet(position, player.angle, owner=player))
+                self.fired_players.add(player)
                 self._fire_cooldowns[player] = 1 / (DT * FIRERATE)
 
         for bullet in self.bullets:
@@ -119,15 +154,15 @@ class GameHandler:
             bullet for bullet in self.bullets
             if not bullet.hasHit and not bullet.oob
         ]
+        self.players = [player for player in self.players if player.health > 0]
 
     def update(self, elapsed=DT):
         if elapsed < 0:
             raise ValueError("Elapsed time must not be negative")
+        self.fired_players.clear()
         self._time_diff += min(elapsed, 0.25)
 
-        for player in self.players:
-            if player.health <= 0:
-                self.players.remove(player)
+        self.players = [player for player in self.players if player.health > 0]
 
         while self._time_diff >= DT:
             self._step()
